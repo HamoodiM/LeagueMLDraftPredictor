@@ -68,76 +68,121 @@ class DraftDataset(Dataset):
         return self.samples[idx]
 
 def train():
-    # 1. Database & Vocab
-    engine = init_db(DB_URL)
-    session = sessionmaker(bind=engine)()
+    """
+    Train the Draft Recommender Network.
     
-    indexer = ChampionIndexer()
-    if not os.path.exists(indexer.vocab_file):
-        print("Error: Vocab not found. Run vectorizer.py first.")
-        return
-    indexer.load()
-    
-    vectorizer = DraftVectorizer(indexer)
-    vocab_size = len(indexer.champ_to_idx)
-    
-    # 2. Load Data
-    print("Querying matches...")
-    matches = session.query(Match).all()
-    if not matches:
-        print("No matches found.")
-        return
+    Raises:
+        FileNotFoundError: If vocab or database not found
+        RuntimeError: If no matches found in database
+    """
+    try:
+        # 1. Database & Vocab
+        print("Initializing database and vocabulary...")
+        engine = init_db(DB_URL)
+        session = sessionmaker(bind=engine)()
         
-    dataset = DraftDataset(matches, vectorizer)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+        indexer = ChampionIndexer()
+        if not os.path.exists(indexer.vocab_file):
+            raise FileNotFoundError(
+                f"Vocabulary file not found at {indexer.vocab_file}. "
+                "Please run: python -m src.ingest"
+            )
+        indexer.load()
+        print(f"✓ Loaded {len(indexer.champ_to_idx)} champions")
+        
+    except Exception as e:
+        print(f"❌ Initialization Error: {e}")
+        return
     
-    # 3. Model Setup
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Training on {device}")
-    
-    model = DraftRecommenderNet(vocab_size, EMBEDDING_DIM, HIDDEN_DIM).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    criterion = nn.CrossEntropyLoss()
+    try:
+        vectorizer = DraftVectorizer(indexer)
+        vocab_size = len(indexer.champ_to_idx)
+        
+        # 2. Load Data
+        print("Loading match data from database...")
+        matches = session.query(Match).all()
+        if not matches:
+            raise RuntimeError(
+                "No matches found in database. "
+                "Please run: python -m src.ingest"
+            )
+        print(f"✓ Loaded {len(matches)} matches")
+            
+        dataset = DraftDataset(matches, vectorizer)
+        if len(dataset) == 0:
+            raise RuntimeError("No training samples generated from matches")
+        print(f"✓ Generated {len(dataset)} training samples")
+        
+        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+        
+        # 3. Model Setup
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"✓ Training on {device}")
+        
+        model = DraftRecommenderNet(vocab_size, EMBEDDING_DIM, HIDDEN_DIM).to(device)
+        optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+        criterion = nn.CrossEntropyLoss()
+        
+    except Exception as e:
+        print(f"❌ Data Loading Error: {e}")
+        return
     
     # 4. Training Loop
-    model.train()
-    for epoch in range(EPOCHS):
-        total_loss = 0
-        correct = 0
-        total = 0
-        
-        progress = tqdm(dataloader, desc=f"Epoch {epoch+1}/{EPOCHS}")
-        for batch in progress:
-            # Move to device
-            context_picks = batch['context_picks'].to(device)
-            enemy_picks = batch['enemy_picks'].to(device)
-            bans = batch['bans'].to(device)
-            target = batch['target_label'].to(device) # Shape [Batch]
+    try:
+        model.train()
+        for epoch in range(EPOCHS):
+            total_loss = 0
+            correct = 0
+            total = 0
             
-            optimizer.zero_grad()
-            
-            # Forward
-            logits = model(context_picks, enemy_picks, bans)
-            
-            # Loss
-            loss = criterion(logits, target)
-            loss.backward()
-            optimizer.step()
-            
-            total_loss += loss.item()
-            
-            # Accuracy Calc
-            _, predicted = torch.max(logits, 1)
-            correct += (predicted == target).sum().item()
-            total += target.size(0)
-            
-            progress.set_postfix(loss=loss.item(), acc=correct/total)
-            
-        print(f"Epoch {epoch+1} finished. Avg Loss: {total_loss/len(dataloader):.4f}, Acc: {correct/total:.4f}")
+            progress = tqdm(dataloader, desc=f"Epoch {epoch+1}/{EPOCHS}")
+            for batch in progress:
+                # Move to device
+                context_picks = batch['context_picks'].to(device)
+                enemy_picks = batch['enemy_picks'].to(device)
+                bans = batch['bans'].to(device)
+                target = batch['target_label'].to(device) # Shape [Batch]
+                
+                optimizer.zero_grad()
+                
+                # Forward
+                logits = model(context_picks, enemy_picks, bans)
+                
+                # Loss
+                loss = criterion(logits, target)
+                loss.backward()
+                optimizer.step()
+                
+                total_loss += loss.item()
+                
+                # Accuracy Calc
+                _, predicted = torch.max(logits, 1)
+                correct += (predicted == target).sum().item()
+                total += target.size(0)
+                
+                progress.set_postfix(loss=loss.item(), acc=correct/total)
+                
+            print(f"Epoch {epoch+1} finished. Avg Loss: {total_loss/len(dataloader):.4f}, Acc: {correct/total:.4f}")
 
-    # 5. Save
-    torch.save(model.state_dict(), MODEL_PATH)
-    print(f"Model saved to {MODEL_PATH}")
+        # 5. Save
+        torch.save(model.state_dict(), MODEL_PATH)
+        print(f"✓ Model saved to {MODEL_PATH}")
+        
+    except KeyboardInterrupt:
+        print("\n⚠ Training interrupted by user")
+        torch.save(model.state_dict(), MODEL_PATH.replace('.pth', '_interrupted.pth'))
+        print(f"  Partial model saved to {MODEL_PATH.replace('.pth', '_interrupted.pth')}")
+    except Exception as e:
+        print(f"❌ Training Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return
 
 if __name__ == "__main__":
-    train()
+    try:
+        train()
+    except Exception as e:
+        print(f"❌ Fatal Error: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)

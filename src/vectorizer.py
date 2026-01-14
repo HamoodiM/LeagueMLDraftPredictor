@@ -73,6 +73,11 @@ class DraftVectorizer:
         blue_bans = [self.indexer.get_id(b.champion) for b in match.bans if b.team_side == 'Blue']
         red_bans = [self.indexer.get_id(b.champion) for b in match.bans if b.team_side == 'Red']
         
+        # Store raw bans before padding
+        blue_bans_raw = blue_bans.copy()
+        red_bans_raw = red_bans.copy()
+        all_bans_raw = blue_bans_raw + red_bans_raw
+        
         # Pad bans to fixed size (usually 5)
         blue_bans += [0] * (5 - len(blue_bans))
         red_bans += [0] * (5 - len(red_bans))
@@ -80,6 +85,10 @@ class DraftVectorizer:
         # 2. Encode Picks (Set of 5)
         blue_picks = [self.indexer.get_id(p.champion) for p in match.picks if p.team_side == 'Blue']
         red_picks = [self.indexer.get_id(p.champion) for p in match.picks if p.team_side == 'Red']
+        
+        # Store raw picks before conversion
+        blue_picks_raw = blue_picks.copy()
+        red_picks_raw = red_picks.copy()
         
         # 3. Create Multi-Hot Vectors (Bag of Champions)
         # Shape: [Vocab_Size] -> 1 if champion is present, 0 otherwise
@@ -95,8 +104,13 @@ class DraftVectorizer:
         return {
             "blue_bans": torch.tensor(blue_bans, dtype=torch.long),
             "red_bans": torch.tensor(red_bans, dtype=torch.long),
+            "blue_bans_raw": blue_bans_raw,
+            "red_bans_raw": red_bans_raw,
+            "bans_raw": all_bans_raw,
             "blue_picks_vec": blue_picks_vec,
             "red_picks_vec": red_picks_vec,
+            "blue_picks_raw": blue_picks_raw,
+            "red_picks_raw": red_picks_raw,
             "outcome": torch.tensor(win_label, dtype=torch.float)
         }
 
