@@ -1,0 +1,7 @@
+pandas==2.3.3
+sqlalchemy==2.0.45
+psycopg2-binary==2.9.11
+tqdm==4.66.1
+torch==2.1.0
+numpy>=1.26.0
+python-dotenv==1.2.1
